@@ -1,0 +1,25 @@
+type list = { info: int, next: list };
+
+var hash_table: array[list] = array(7,());
+
+def insert ( x: int ) {
+  var i = x % hash_table.length;
+  hash_table[i] = { info=x, next=hash_table[i] };
+};
+
+def print_all () {
+  for ( i = 0 to hash_table.length-1 ) {
+     var x = hash_table[i];
+     while ( x <> () ) {
+       print(i," ",x.info);
+       x = x.next;
+     };
+  };
+};
+
+insert(1);
+insert(20);
+insert(33);
+insert(26);
+insert(18);
+print_all();

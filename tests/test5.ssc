@@ -1,0 +1,43 @@
+var x = 6;
+var y = 3;
+
+def f (a : int) {
+  print(a);
+};
+
+var ff = f;
+ff(10);
+print(x);
+
+var g = function ( z: int, y: int ): int { var w = x; x = x*5; return w+3*y; };
+
+print(g(4,5));
+print(x);
+
+print(g(2,3));
+print(x);
+
+def h ( x: int ): (int)->int {
+  return function ( z: int ): int { return x+z; };
+};
+
+var k = h(10);
+var kk = h(9);
+
+print(k(4));
+print(kk(6));
+
+x = 3;
+y = 4;
+
+var m = function ( x: int ): (int)->int { return function (z:int):int { return z+x*3+y*4; }; };
+
+var mm = m(10);
+print(mm(4));
+
+def compose ( f: (int)->int, g: (int)->int ): (int)->int {
+   return function (x:int):int { return f(g(x)); };
+};
+
+var hh = compose(mm,m(20));
+print(hh(6));

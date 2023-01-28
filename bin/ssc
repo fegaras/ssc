@@ -1,0 +1,15 @@
+#/bin/bash
+
+SSC_HOME="$(cd `dirname $0`/..; pwd -P)"
+bn=`basename $1 .ssc`
+
+echo "scala -cp $SSC_HOME/lib/SSC.jar edu.uta.ssc.SSC $1"
+scala -cp $SSC_HOME/lib/SSC.jar edu.uta.ssc.SSC $1
+echo "llc $bn.ll"
+llc $bn.ll
+x="a.out"
+if [ "$2" != "" ]; then
+   x=$2
+fi
+echo "gcc-5 $bn.s -L$SSC_HOME/lib -lgc -o $x"
+gcc-5 $bn.s -L$SSC_HOME/lib -lgc -o $x

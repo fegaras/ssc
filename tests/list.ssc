@@ -1,0 +1,41 @@
+type list = { head: int, tail: list };
+
+var N = 100;
+
+var x: list = ();
+
+for ( k = 1 to N )
+   x = { head=k, tail=x };
+
+def printl ( l: list ) {
+  if (l <> ()) {
+     print(l.head);
+     printl(l.tail);
+  };
+};
+
+def append1 ( i: int, l: list ): list {
+  if (l == ())
+     return { head=i, tail=() };
+  return { head=l.head, tail=append1(i,l.tail) };
+};
+
+def append ( x: list, y: list ): list {
+  if (x == ())
+     return y;
+  return { head=x.head, tail=append(x.tail,y) };
+};
+
+def reverse ( l: list ): list {
+  if (l == ())
+     return ();
+  return append1(l.head,reverse(l.tail));
+};
+
+def map ( l: list, f: (int) -> int ): list {
+  if (l == ())
+     return ();
+  return { head=f(l.head), tail=map(l.tail,f) };
+};
+
+printl(reverse(map(x,function (i:int):int { return i+1; })));
