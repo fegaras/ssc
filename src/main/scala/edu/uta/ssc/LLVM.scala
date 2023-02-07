@@ -99,8 +99,8 @@ class LLVM ( out: java.io.PrintStream ) {
       case VoidIRtype()
         => "i8*"
       case StringIRtype()
-        => "{i32,[0 x i8]}*"
-      case NamedIRtype(nm)
+        => "{i32,i8*}*"
+      case NamedIRtype(nm,_)
         => s"%$nm"
       case AddressIRtype(etp)
         => ltype(etp) + "*"
@@ -112,19 +112,44 @@ class LLVM ( out: java.io.PrintStream ) {
         => s"void ${as.map(ltype).mkString("( ", ", ", " )")}"
       case FunctionIRtype(as,ot)
         => s"${ltype(ot)} ${as.map(ltype).mkString("( ", ", ", " )")}"
+      // a type variable in a polymorphic function must be able to coerce to i8*
+      case TypeVarIRtype(_)
+        => "i8*"
       case _ => throw new Error("Wrong IRtype: "+tp)
     }
+
+  /* substitute type s for all occurences of the type variable v in the term t */
+  def subst ( tv: String, s: IRtype, t: IRtype ): IRtype
+    = t match {
+        case TypeVarIRtype(v)
+          => if (v == tv) s else t
+        case AddressIRtype(a)
+          => AddressIRtype(subst(tv,s,a))
+        case NamedIRtype(n,ts)
+          => NamedIRtype(n,ts.map(subst(tv,s,_)))
+        case VecIRtype(et)
+          => VecIRtype(subst(tv,s,et))
+        case RecordIRtype(ts)
+          => RecordIRtype(ts.map { case Bind(v,t) => Bind(v,subst(tv,s,t)) })
+        case TupleIRtype(ts)
+          => TupleIRtype(ts.map(subst(tv,s,_)))
+        case FunctionIRtype(fps,ot)
+          => FunctionIRtype(fps.map(subst(tv,s,_)),subst(tv,s,ot))
+        case _ => t
+      }
 
   /** expand the named types in an IRtype */
   def expand_type ( tp: IRtype ): IRtype =
     tp match {
-      case NamedIRtype(name)
-        => declarations.flatMap {
-              case Bind(nm,IRtypeDecl(lnm,etp))
+      case NamedIRtype(name,ts)
+        => expand_type(declarations.flatMap {
+              case Bind(nm,IRtypeDecl(lnm,tvs,etp))
                 if nm == name || lnm == name
-                => List(etp)
+                => List((tvs zip ts).foldLeft(etp) {
+                              case (r,(v,t)) => subst(v,t,r)
+                            })
               case _ => Nil
-           }.head
+           }.head)
       case _ => tp
     }
 
@@ -137,17 +162,19 @@ class LLVM ( out: java.io.PrintStream ) {
         => FloatIRtype()
       case BooleanValue(_)
         => BooleanIRtype()
+      case StringValue(_)
+        => StringIRtype()
       case NullValue()
         => VoidIRtype()
       case VoidValue()
         => VoidIRtype()
       case FramePointer()
-        => AddressIRtype(NamedIRtype(frame_type_name))
+        => AddressIRtype(NamedIRtype(frame_type_name,Nil))
       case Allocate(tp,_)
         => AddressIRtype(tp)
       case Closure(f,_)
         => declarations.flatMap {
-              case Bind(_,IRfuncDecl(nm,_,fs,ot,_,_))
+              case Bind(_,IRfuncDecl(nm,_,_,fs,ot,_,_))
                 if nm==f
                 => val ftp = FunctionIRtype(AddressIRtype(ByteIRtype())::fs,ot)
                    List(AddressIRtype(TupleIRtype(List(AddressIRtype(ftp),
@@ -172,9 +199,9 @@ class LLVM ( out: java.io.PrintStream ) {
                         => AddressIRtype(cs(i))
                       case (VecIRtype(etp),_)
                         => AddressIRtype(etp)
-                      case _ => throw new Error("Wrong pointer arithmetic: "+e)
+                      case (tp,_) => throw new Error("Wrong pointer arithmetic: "+e+" "+tp)
                    }
-              case _ => throw new Error("Wrong pointer arithmetic: "+e)
+              case tp => throw new Error("Wrong pointer arithmetic: "+e+" "+tp)
            }
       case Binop(op,l,r)
         => val ltp = typeof(l)
@@ -203,7 +230,7 @@ class LLVM ( out: java.io.PrintStream ) {
            else tp
       case Address(name)
         => declarations.flatMap {
-              case Bind(_,IRfuncDecl(nm,_,fs,ot,_,_))
+              case Bind(_,IRfuncDecl(nm,_,_,fs,ot,_,_))
                 if nm==name
                 => List(AddressIRtype(FunctionIRtype(AddressIRtype(ByteIRtype())::fs,ot)))
               case _ => Nil
@@ -218,6 +245,8 @@ class LLVM ( out: java.io.PrintStream ) {
             }
       case TypeSize(_)
         => IntIRtype()
+      case Coerce(_,_,tp)
+        => tp
       case _ => throw new Error("Wrong IRexp: "+e)
     }
 
@@ -228,13 +257,12 @@ class LLVM ( out: java.io.PrintStream ) {
       case IntValue(n)
         => Operand(n.toString)
       case FloatValue(n)
-        => Operand(n.toString)
+        => Operand("0x"+java.lang.Double.doubleToLongBits(n.toDouble).toHexString)
       case BooleanValue(b)
         => Operand(if (b) "1" else "0")
       case StringValue(s)
         => val len = s.length + 1
-           val str = allocate_string(s)
-           llvm(s"getelementptr inbounds [$len x i8], [$len x i8]* @$str, i32 0, i32 0")
+           Operand("@"+allocate_string(s))
       case NullValue()
         => Operand("null")
       case VoidValue()
@@ -358,6 +386,34 @@ class LLVM ( out: java.io.PrintStream ) {
                => val size = llvm(s"getelementptr $ltp, $ltp* null, i32 1 ; calculate the size in bytes")
                   llvm(s"ptrtoint $ltp* $size to i32")
            }
+      case ESeq(s,u)
+        => emit(s,IntIRtype())
+           emit(u)
+      case Coerce(u,from,to)
+        => val ft = ltype(from)
+           val tt = ltype(to)
+           val cu = emit(u)
+           if (from == to)
+             cu
+           else if (from.isInstanceOf[TypeVarIRtype])
+             to match {
+                case IntIRtype() | BooleanIRtype() | ByteIRtype()
+                  => llvm(s"ptrtoint $ft $cu to $tt")
+                case FloatIRtype()
+                  => val ci = llvm(s"ptrtoint $ft $cu to i32")
+                     llvm(s"bitcast i32 $ci to $tt")
+                case _ => llvm(s"bitcast $ft $cu to $tt")
+             }
+           else if (to.isInstanceOf[TypeVarIRtype])
+             from match {
+                case IntIRtype() | BooleanIRtype() | ByteIRtype()
+                  => llvm(s"inttoptr $ft $cu to $tt")
+                case FloatIRtype()
+                  => val ci = llvm(s"bitcast $ft $cu to i32")
+                     llvm(s"inttoptr i32 $ci to $tt")
+                case _ => llvm(s"bitcast $ft $cu to $tt")
+             }
+           else llvm(s"bitcast $ft $cu to $tt")
       case _ => throw new Error("Wrong IRexp: "+e)
     }
 
@@ -367,12 +423,10 @@ class LLVM ( out: java.io.PrintStream ) {
     after_jump = false
     e match {
       case Move(Mem(d),s)
-        => val stp = llvm_type(s)
-           val dtp = llvm_type(Mem(d))
-           val source = if (stp != dtp)
-                          llvm(s"bitcast $stp ${emit(s)} to $dtp")
-                        else emit(s)
-           llvms(s"store $dtp $source, $dtp* ${emit(d)}")
+        => val dtp = typeof(Mem(d))
+           val stp = typeof(s)
+           val source = emit(Coerce(s,stp,dtp))
+           llvms(s"store ${ltype(dtp)} $source, ${ltype(dtp)}* ${emit(d)}")
       case Label(n)
         => llvm_label(n)
       case Jump(n)
@@ -418,17 +472,35 @@ class LLVM ( out: java.io.PrintStream ) {
                       llvm(s"bitcast $vtp ${emit(v)} to $etp")
                     else emit(v)
            llvms(s"ret $etp $sv")
+      case Seq(s)
+        => s.foreach(emit(_,return_type))
       case SystemCall("WRITE_INT",a)
-        => llvms(s"call i32 @puti ( i32 ${emit(a)} )")
+        => val v = typeof(a) match {
+                      case t@TypeVarIRtype(_)
+                        => Coerce(a,t,IntIRtype())
+                      case _ => a
+                   }
+           llvms(s"call i32 @puti ( i32 ${emit(v)} )")
+      case SystemCall("WRITE_FLOAT",a)
+        => val v = typeof(a) match {
+                      case t@TypeVarIRtype(_)
+                        => Coerce(a,t,FloatIRtype())
+                      case _ => a
+                   }
+           llvms(s"call i32 @putf ( float ${emit(v)} )")
       case SystemCall("WRITE_STRING",StringValue("\\n"))
         => val nl = llvm("getelementptr inbounds [2 x i8], [2 x i8]* @.new_line, i32 0, i32 0")
            llvms(s"call i32(i8*, ...) @printf ( i8* $nl )")
       case SystemCall("WRITE_STRING",a)
-        => llvms(s"call i32(i8*, ...) @printf ( i8* ${emit(a)} )")
+        => val v = llvm(s"getelementptr inbounds {i32,i8*}, {i32,i8*}* ${emit(a)}, i32 0, i32 1")
+           val w = llvm(s"load i8*, i8** $v")
+           llvms(s"call i32(i8*, ...) @printf ( i8* $w )")
       case SystemCall("READ_INT",a)
         => llvms(s"call i32 @geti ( i32* ${emit(a)} )")
-      case SystemCall(_,a)
-        => llvms(s"PRINT/READ ${emit(a)}")
+      case SystemCall("READ_FLOAT",a)
+        => llvms(s"call i32 @getf ( float* ${emit(a)} )")
+      case SystemCall("READ_STRING",a)
+        => llvms(s"call i32 @getf ( i8* ${emit(a)} )")
       case _ => throw new Error("Wrong IRstmt: "+e)
     }
   }
@@ -450,7 +522,7 @@ class LLVM ( out: java.io.PrintStream ) {
   /** emit LLVM code for a declaration */
   def emit ( e: IRdecl ) {
     e match {
-      case IRfuncDecl("main",fl, _, _, _, body)
+      case IRfuncDecl("main",fl,_,_,_,_,body)
         => frame_type = TupleIRtype(fl)
            frame_type_name = "main_frame"
            register_count = 0
@@ -459,7 +531,7 @@ class LLVM ( out: java.io.PrintStream ) {
            body.foreach(emit(_,VoidIRtype()))
            llvms("ret i32 0")
            out.println("}\n")
-      case IRfuncDecl(fn, fl, fs, ot, _, body)
+      case IRfuncDecl(fn,fl,_,fs,ot,_,body)
         => frame_type_name = fn+"_frame"
            frame_type = TupleIRtype(fl)
            register_count = 0
@@ -491,8 +563,9 @@ class LLVM ( out: java.io.PrintStream ) {
              case _ => llvms("unreachable")
            }
            out.println("}\n")
-      case IRtypeDecl(nm,tp)
-        => out.println(s"%$nm = type ${ltype(tp)}\n")
+      case IRtypeDecl(nm,_,tp)
+        => val ltp = ltype(expand_type(tp))
+           out.println(s"%$nm = type $ltp\n")
       case _ => ;
     }
   }
@@ -508,6 +581,8 @@ declare i32 @printf ( i8*, ... )
 declare i32 @scanf ( i8*, ... )
 declare void @exit ( i32 )
 @.sfi = private unnamed_addr constant [3 x i8] c"%i\00", align 1
+@.sff = private unnamed_addr constant [3 x i8] c"%f\00", align 1
+@.sfs = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 define i32 @puti ( i32 ) {
   %f = getelementptr inbounds [3 x i8], [3 x i8]* @.sfi, i32 0, i32 0
   call i32 (i8*, ...) @printf(i8* %f, i32 %0)
@@ -518,10 +593,10 @@ define i32 @geti ( i32* ) {
   call i32 (i8*, ...) @scanf(i8* %f, i32* %0)
   ret i32 0
 }
-@.sff = private unnamed_addr constant [3 x i8] c"%f\00", align 1
 define i32 @putf ( float ) {
   %f = getelementptr inbounds [3 x i8], [3 x i8]* @.sff, i32 0, i32 0
-  call i32 (i8*, ...) @printf(i8* %f, float %0)
+  %d = fpext float %0 to double
+  call i32 (i8*, ...) @printf(i8* %f, double %d)
   ret i32 0
 }
 define i32 @getf ( float* ) {
@@ -529,12 +604,19 @@ define i32 @getf ( float* ) {
   call i32 (i8*, ...) @scanf(i8* %f, float* %0)
   ret i32 0
 }
+define i32 @gets ( i8* ) {
+  %f = getelementptr inbounds [3 x i8], [3 x i8]* @.sfs, i32 0, i32 0
+  call i32 (i8*, ...) @scanf(i8* %f, i8* %0)
+  ret i32 0
+}
 @.new_line = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
 """)
     val quote = "\""
     globals.zipWithIndex.foreach {
       case (s,i)
-        => out.println(s"@S_$i = private unnamed_addr constant [${s.length + 1} x i8] c$quote$s\00$quote, align 1")
+        => val len = s.length+1
+           out.println(s"@S_c_$i = private unnamed_addr constant [$len x i8] c$quote$s\\00$quote, align 1")
+           out.println(s"@S_$i = private unnamed_addr constant {i32,i8*} { i32 $len, i8* bitcast([$len x i8]* @S_c_$i to i8*) }")
     }
   }
 }

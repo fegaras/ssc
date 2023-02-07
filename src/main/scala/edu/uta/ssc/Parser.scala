@@ -24,6 +24,7 @@ import scala.util.matching.Regex
 trait MyTokens extends StdTokens {
   case class DoubleLit ( chars: String ) extends Token
   case class CharLit ( chars: String ) extends Token
+  case class TvarLit ( chars: String ) extends Token
   case class InfixOpr ( chars: String ) extends Token
   case class IncrOpr ( chars: String ) extends Token
 }
@@ -41,7 +42,7 @@ class MyLexical extends StdLexical with MyTokens {
                   }
       }
 
-  override def token: Parser[Token] = incrOpr | infixOpr | doubleLit | charLit | super.token
+  override def token: Parser[Token] = incrOpr | infixOpr | doubleLit | charLit | tvarLit | super.token
 
   /* floating point numbers */
   def doubleLit: Parser[Token]
@@ -50,6 +51,9 @@ class MyLexical extends StdLexical with MyTokens {
   /* character literal */
   def charLit: Parser[Token]
       = regex("""'[^']'""".r) ^^ { CharLit }
+
+  def tvarLit: Parser[Token]
+    = regex("[A-Z]".r) ^^ { TvarLit }
 
   /* an infix operator can be any sequence of special chars, except delimiters, etc */ 
   def infixOpr: Parser[Token]
@@ -70,7 +74,7 @@ object Parser extends StandardTokenParsers {
 
   lexical.reserved ++= List( "and", "array", "boolean", "by", "def", "div", "else", "equal", "exit", "false", "float", "for",
                              "function", "if", "int", "loop", "mod", "not", "or", "print", "read", "return", "to", "type",
-                             "var", "while", "true" )
+                             "var", "while", "true", "string" )
 
   /* groups of infix operator precedence, from low to high */
   val operator_precedence: List[Parser[String]]
@@ -94,13 +98,13 @@ object Parser extends StandardTokenParsers {
       = precedence(level) ^^
         { op => (x:Expr,y:Expr) => BinOpExp(operators(op),x,y) }
   def infix ( level: Int ): Parser[Expr]
-      = if (level >= precedence.length) term
+      = if (level >= precedence.length) factor
         else infix(level+1) * terms(level)
 
   def fromRaw ( s: String ): String = s.replace("""\n""","\n")
         
   def expr: Parser[Expr]
-      = infix(0) | term
+      = infix(0) | factor
 
   def sem: Parser[Option[String]] = opt( ";" )
 
@@ -113,22 +117,43 @@ object Parser extends StandardTokenParsers {
   def float: Parser[Float]
       = accept("float literal",{ case t: lexical.DoubleLit => t.chars.toFloat })
 
- def lvalueL: Parser[Any]
+  def tvar: Parser[String]
+    = accept("type variable name",{ case t: lexical.TvarLit => t.chars })
+
+ def factorList ( e: Expr ): Parser[Expr]
      = ( "[" ~ expr ~ "]" ^^
-         { case _~i~_ => i }
+         { case _~i~_ => ArrayDeref(e,i) }
        | "." ~ ident ^^
-         { case _~a => a }
+         { case _~a => RecordDeref(e,a) }
        | "#" ~ int ^^
-         { case _~n => n }
+         { case _~n => TupleDeref(e,n) }
        )
 
- def lvalue: Parser[Lvalue]
-     = ident ~ rep( lvalueL ) ^^
-       { case v~ls => ls.foldLeft[Lvalue](Var(v))
-                         { case (e,i:Expr) => ArrayDeref(e,i)
-                           case (e,a:String) => RecordDeref(e,a)
-                           case (e,n:Int) => TupleDeref(e,n) }
-       }
+ def factor: Parser[Expr]
+      = term ~ rep( factorList(IntConst(0)) ) ^^
+        { case e~s => s.foldLeft[Expr](e) {
+                          case (r,RecordDeref(_,a))
+                            => RecordDeref(r,a)
+                          case (r,ArrayDeref(_,n))
+                            => ArrayDeref(r,n)
+                          case (r,TupleDeref(_,s))
+                            => TupleDeref(r,s)
+                          case (r,_) => r } }
+
+ def lvalue: Parser[Expr]
+    = ( term ~ rep1( factorList(IntConst(0)) ) ^^
+        { case e~s => s.foldLeft[Expr](e) {
+                          case (r,RecordDeref(_,a))
+                            => RecordDeref(r,a)
+                          case (r,ArrayDeref(_,n))
+                            => ArrayDeref(r,n)
+                          case (r,TupleDeref(_,s))
+                            => TupleDeref(r,s)
+                          case (r,_) => r }
+        }
+      | ident ^^ { s => Var(s) }
+      | failure("Wrong l-value")
+      )
 
   def term: Parser[Expr]
       = ( "true" ^^^ BooleanConst(true)
@@ -143,6 +168,8 @@ object Parser extends StandardTokenParsers {
           { case _~_~e1~_~e2~_ => ArrayGen(e1,e2) }
         | ident ~ "(" ~ repsep( expr, "," ) ~ ")" ^^
           { case f~_~es~_ => CallExp(f,es) }
+        | ident ^^
+          { s => Var(s) }
         | "-" ~ expr ^^
           { case _~e => UnOpExp("minus",e) }
         | "NOT" ~ expr ^^
@@ -158,8 +185,6 @@ object Parser extends StandardTokenParsers {
           { case _~es~_ => TupleExp(es) }
         | "function" ~ "(" ~ formals ~ ")" ~ ":" ~ stype ~ block ^^
           { case _~_~fs~_~_~t~b => FunctionExp(fs,t,b) }
-        | lvalue ^^
-          { e => LvalExp(e) }
         | failure("illegal start of expression")
         )
 
@@ -194,8 +219,10 @@ object Parser extends StandardTokenParsers {
         | "float" ^^^ FloatType()
         | "string" ^^^ StringType()
         | "boolean" ^^^ BooleanType()
-        | ident ^^
-          { v => NamedType(v) }
+        | tvar ^^ { s => TypeParameter(s) }
+        | ident ~ opt("[" ~ rep1sep(stype,",") ~ "]") ^^
+          { case v~None => NamedType(v,Nil)
+            case v~Some(_~vs~_) => NamedType(v,vs) }
         | "array" ~ "[" ~ stype ~ "]" ^^
           { case _~_~t~_ => ArrayType(t) }
         | "{" ~ formals ~ "}" ^^
@@ -217,12 +244,16 @@ object Parser extends StandardTokenParsers {
       = ( "var" ~ ident ~ opt(":" ~ stype) ~ opt("=" ~ expr) ^^
           { case _~f~Some(_~t)~Some(_~e) => VarDef(f,t,e)
             case _~f~None~Some(_~e) => VarDef(f,AnyType(),e)
-            case _~f~Some(_~t)~None => VarDef(f,t,NullExp()) }
-        | "type" ~ ident ~ "=" ~ stype ^^
-          { case _~v~_~t => TypeDef(v,t) }
-        | "def" ~ ident ~ "(" ~ formals ~ ")" ~ opt(":" ~ stype) ~ block ^^
-          { case _~f~_~fs~_~Some(_~t)~b => FuncDef(f,fs,t,b)
-            case _~f~_~fs~_~None~b => FuncDef(f,fs,NoType(),b) }
+            case _~f~Some(_~t)~None => VarDef(f,t,NullExp())
+            case _ => throw new Exception("A var declaration needs a type or a value or both") }
+        | "type" ~ ident ~ opt("[" ~ rep1sep(tvar,",") ~ "]") ~ "=" ~ stype ^^
+          { case _~v~None~_~t => TypeDef(Nil,v,t)
+            case _~v~Some(_~vs~_)~_~t => TypeDef(vs,v,t) }
+        | "def" ~ ident ~ opt("[" ~ rep1sep(tvar,",") ~ "]") ~ "(" ~ formals ~ ")" ~ opt(":" ~ stype) ~ block ^^
+          { case _~f~None~_~fs~_~Some(_~t)~b => FuncDef(Nil,f,fs,t,b)
+            case _~f~None~_~fs~_~None~b => FuncDef(Nil,f,fs,NoType(),b)
+            case _~f~Some(_~vs~_)~_~fs~_~Some(_~t)~b => FuncDef(vs,f,fs,t,b)
+            case _~f~Some(_~vs~_)~_~fs~_~None~b => FuncDef(vs,f,fs,NoType(),b) }
         )
 
   def program: Parser[Program]

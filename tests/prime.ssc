@@ -1,5 +1,5 @@
 var size = 500;
-var IsPrime = array(size,true);
+var isPrime = array(size,true);
 var i = 0;
 var j = 0;
 var k = 0;
@@ -8,14 +8,14 @@ var count = 0;
 
 def mark (x: int) {
   if (x < size) {
-     IsPrime[x] = false;
+     isPrime[x] = false;
      x = x + prime;
      mark(x);
   };
 };
 
 while (j < size) {
-  if (IsPrime[j] == true) {
+  if (isPrime[j] == true) {
      prime = j + j + 3;
      k = j + prime;
      mark(k);

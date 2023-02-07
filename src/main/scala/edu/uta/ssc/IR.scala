@@ -25,12 +25,12 @@ case class StringIRtype () extends IRtype
 case class VoidIRtype () extends IRtype
 case class LabelIRtype () extends IRtype
 case class AddressIRtype ( address: IRtype ) extends IRtype
-case class NamedIRtype ( name: String ) extends IRtype
+case class NamedIRtype ( name: String, args: List[IRtype] ) extends IRtype
 case class VecIRtype ( elem: IRtype ) extends IRtype
 case class RecordIRtype ( elems: List[Bind[IRtype]] ) extends IRtype
 case class TupleIRtype ( elems: List[IRtype] ) extends IRtype
 case class FunctionIRtype ( formal_params: List[IRtype], result_type: IRtype ) extends IRtype
-
+case class TypeVarIRtype ( type_var: String ) extends IRtype
 
 /** Intermediate Representations for Expressions */
 sealed abstract class IRexp
@@ -60,7 +60,8 @@ case class Unop ( op: String, operand: IRexp ) extends IRexp
 case class Call ( address: IRexp, static_link: IRexp, arguments: List[IRexp] ) extends IRexp
 /** evaluate the statement and return the value */
 case class ESeq ( stmt: IRstmt, value: IRexp ) extends IRexp
-
+/** used in polymorphic functions */
+case class Coerce ( e: IRexp, from_type: IRtype, to_type: IRtype ) extends IRexp
 
 /** Intermediate Representations for Statements */
 sealed abstract class IRstmt
@@ -84,6 +85,6 @@ case class Assert ( condition: IRexp ) extends IRstmt
 
 
 sealed abstract class IRdecl
-case class IRtypeDecl ( label: String, isType: IRtype ) extends IRdecl
-case class IRfuncDecl ( label: String, frame: List[IRtype], formal_params: List[IRtype],
+case class IRtypeDecl ( label: String, type_vars: List[String], isType: IRtype ) extends IRdecl
+case class IRfuncDecl ( label: String, frame: List[IRtype], type_vars: List[String], formal_params: List[IRtype],
                         result_type: IRtype, level: Int, body: List[IRstmt] ) extends IRdecl

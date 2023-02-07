@@ -16,7 +16,7 @@
 package edu.uta.ssc
 
 object CodeGenerator {
-  import TypeChecker._
+  import TypeInference._
 
   /** global declarations */
   var declarations: List[Bind[IRdecl]] = Nil
@@ -41,25 +41,17 @@ object CodeGenerator {
   /** return the type name of the current frame */
   def frame_type_name ( fname: String ): String =
     st.lookup(fname) match {
-      case Some(FuncDeclaration(_,_,label,_,_))
+      case Some(FuncDeclaration(_,_,_,label,_,_))
         => label+"_frame"
       case _ => throw new Error("Unknown frame for function "+fname)
     }
 
   /** true if tp1 occurs inside tp2 */
-  def occurs ( tp1: Type, tp2: Type ): Boolean =
-    tp2 match {
-      case TupleType(ts)
-        => ts.map(occurs(tp1,_)).reduce(_ || _)
-      case RecordType(rs)
-        => rs.map{ case Bind(_,etp) => occurs(tp1,etp) }.reduce(_ || _)
-      case ArrayType(etp)
-        => occurs(tp1,etp)
-      case _ => tp1 == tp2
-    }
+  def occurs ( tp1: Type, tp2: Type ): Boolean
+    = tp1 == tp2 || AST.accumulate[Boolean](tp2,occurs(tp1,_),_||_,false)
 
   /** Data Allocation: convert a type AST to an IR type */
-  def Type2IRtype ( tp: Type ): IRtype =
+  def Type2IRtype ( tp: Type, parametric: Boolean ): IRtype =
     tp match {
       case IntType()
         => IntIRtype()
@@ -73,52 +65,43 @@ object CodeGenerator {
         => VoidIRtype()
       case AnyType()
         => VoidIRtype()
-      case NamedType(n)
+      case NamedType(n,tps)
         => lookup(n) match {
-             case Some(IRtypeDecl(lnm,_))
-               => AddressIRtype(NamedIRtype(lnm))
-             case _
-               => st.lookup(n) match {
-                    case Some(TypeDeclaration(ht))
-                      => if (occurs(tp,ht)) {
-                           // store the new recursive type in the declarations
-                           val lnm = new_name(n)
-                           val bd: Bind[IRdecl] = Bind(n,IRtypeDecl(lnm,null))
-                           declarations = declarations :+ bd
-                           Type2IRtype(ht) match {
-                             case AddressIRtype(etp)
-                               => bd.value = IRtypeDecl(lnm,etp)
-                                  AddressIRtype(NamedIRtype(lnm))
-                             case _ => throw new Error("Wrong recursive type: "+n)
-                           }
-                         } else Type2IRtype(ht)
-                    case _ => throw new Error("Undefined type: "+n)
-                    }
+             case Some(IRtypeDecl(lnm,vs,_))
+               if parametric
+               => AddressIRtype(NamedIRtype(lnm,vs.map(TypeVarIRtype)))
+             case Some(IRtypeDecl(lnm,_,_))
+               => AddressIRtype(NamedIRtype(lnm,tps.map(Type2IRtype(_,parametric))))
+             case _ => throw new Error("Undefined type: "+n)
            }
       case ArrayType(etp)
         => AddressIRtype(TupleIRtype(List(IntIRtype(),
-                                          VecIRtype(Type2IRtype(etp)))))
+                                          VecIRtype(Type2IRtype(etp,parametric)))))
       case TupleType(ltp)
-        => AddressIRtype(TupleIRtype(ltp.map(Type2IRtype)))
+        => AddressIRtype(TupleIRtype(ltp.map(Type2IRtype(_,parametric))))
       case RecordType(bs)
-        => AddressIRtype(TupleIRtype(bs.map{ case Bind(_,etp) => Type2IRtype(etp) }))
+        => AddressIRtype(TupleIRtype(bs.map{ case Bind(_,etp) => Type2IRtype(etp,parametric) }))
       case FunctionType(fs,ot)
-        => val ftp = FunctionIRtype(AddressIRtype(ByteIRtype())::fs.map(Type2IRtype),
-                                    Type2IRtype(ot))
+        => val ftp = FunctionIRtype(AddressIRtype(ByteIRtype())::fs.map(Type2IRtype(_,parametric)),
+                                    Type2IRtype(ot,parametric))
            // a closure is a pair of a function type with a static link type (a void* type)
            AddressIRtype(TupleIRtype(List(AddressIRtype(ftp),
                                           AddressIRtype(ByteIRtype()))))
+      // A type variable needs to allocate 8 bytes, since long integers and doubles
+      //    are not supported in polymorphic functions
+      case TypeParameter(v)
+        => TypeVarIRtype(v)
       case _ => throw new Error("Uknown type: "+tp)
     }
 
   /** allocate a new variable at the end of the current frame and return its value */
   def allocate_in_frame ( name: String, var_type: Type, fname: String ): IRexp =
     st.lookup(fname) match {
-      case Some(FuncDeclaration(rtp,params,label,level,min_offset))
+      case Some(FuncDeclaration(tps,rtp,params,label,level,min_offset))
         => // allocate variable at the next available offset in frame
            st.insert(name,VarDeclaration(var_type,level,min_offset))
            // update the next available offset in frame
-           st.replace(fname,FuncDeclaration(rtp,params,label,level,min_offset+1))
+           st.replace(fname,FuncDeclaration(tps,rtp,params,label,level,min_offset+1))
            // return the code that accesses the variable
            Mem(Indexed(FramePointer(),IntValue(min_offset)))
       case _ => throw new Error("No current function: " + fname)
@@ -127,13 +110,13 @@ object CodeGenerator {
   /** return the address of a frame-allocated variable from the run-time stack */
   def access_variable ( name: String, level: Int, fname: String ): IRexp =
     st.lookup(name) match {
-      case Some(VarDeclaration(_,var_level,offset))
+      case Some(VarDeclaration(vs,var_level,offset))
         => var sl: IRexp = FramePointer()
            // non-local variable: follow the static link (level-var_level) times
            for ( _ <- var_level+1 to level )
              sl = Mem(Indexed(sl,IntValue(0)))
            Indexed(sl,IntValue(offset))
-      case Some(FuncDeclaration(rtp,params,label,flevel,_))
+      case Some(FuncDeclaration(vs,rtp,params,label,flevel,_))
         => var sl: IRexp = FramePointer()
            // non-local variable: follow the static link (level-var_level) times
            for ( _ <- flevel+1 to level )
@@ -145,6 +128,9 @@ object CodeGenerator {
                 access_variable("C",level,fname))
       case _ => throw new Error("Undefined variable: " + name)
     }
+
+  def coerce ( e: IRexp, from_type: IRtype, to_type: IRtype ): IRexp
+    = if (from_type == to_type) e else Coerce(e,from_type,to_type)
 
   /** return the IR code from the Expr e (level is the current function nesting level,
    *  fname is the name of the current function/procedure) */
@@ -169,26 +155,81 @@ object CodeGenerator {
         => val c = code(u,level,fname)
            val nop = op.toUpperCase()
            Unop(nop,c)
-      case LvalExp(v)
-        => Mem(code(v,level,fname))
+      case Var(s)
+        => Mem(access_variable(s,level,fname))
+      case ArrayDeref(v,u)
+        => val cv = code(v,level,fname)
+           val cu = code(u,level,fname)
+           val tp = expandType(type_inference(v),true)
+           tp match {
+              case ArrayType(et)
+                => Mem(coerce(Indexed(Indexed(cv,IntValue(1)),cu),
+                              AddressIRtype(Type2IRtype(et,true)),
+                              AddressIRtype(Type2IRtype(type_inference(e),false))))
+              case _ => throw new Error("Unkown array: "+e)
+           }
+      case TupleDeref(t,i)
+        => val ct = code(t,level,fname)
+           val tp = expandType(type_inference(t),true)
+           tp match {
+              case TupleType(ts)
+                => Mem(coerce(Indexed(ct,IntValue(i)),
+                              AddressIRtype(Type2IRtype(ts(i),true)),
+                              AddressIRtype(Type2IRtype(type_inference(e),false))))
+              case _ => throw new Error("Unkown tuple: "+e)
+           }
+      case RecordDeref(r,a)
+        => val cr = code(r,level,fname)
+           val tp = expandType(type_inference(r),true)
+           tp match {
+              case RecordType(cl)
+                => val i = cl.map(_.name).indexOf(a)
+                   Mem(coerce(Indexed(cr,IntValue(i)),
+                              AddressIRtype(Type2IRtype(cl(i).value,true)),
+                              AddressIRtype(Type2IRtype(type_inference(e),false))))
+              case ArrayType(etp) if a == "length"
+                => Mem(Indexed(cr,IntValue(0)))
+              case _ => throw new Error("Unkown record: "+e)
+           }
       case CallExp(f,args)
         => st.lookup(f) match {
-             case Some(FuncDeclaration(_,_,label,callee_level,_))
+             case Some(FuncDeclaration(_,ot,ps,label,callee_level,_))
                => var sl: IRexp = FramePointer()
                   for ( _ <- callee_level to level )
                      sl = Mem(Indexed(sl,IntValue(0)))
-                  Call(Address(label),sl,args.map(code(_,level,fname)))
-             case Some(VarDeclaration(FunctionType(_,_),_,_))
+                  val co = Call(Address(label),sl,
+                                (args zip ps).map {
+                                    case (a,Bind(_,t))
+                                      => if (typevars(t).isEmpty)
+                                           code(a,level,fname)
+                                         else coerce(code(a,level,fname),
+                                                     Type2IRtype(type_inference(a),false),
+                                                     Type2IRtype(t,true))
+                                })
+                  if (typevars(ot).isEmpty)
+                    co
+                  else coerce(co,Type2IRtype(ot,true),Type2IRtype(type_inference(e),false))
+             case Some(VarDeclaration(FunctionType(ps,ot),_,_))
                => val cv = access_variable(f,level,fname)
                   /* get the function address and the frame link from the closure cv */
-                  Call(Mem(cv),
-                       Mem(Indexed(cv,IntValue(1))),  // frame link
-                       args.map(code(_,level,fname)))
+                  val co = Call(Mem(cv),
+                                Mem(Indexed(cv,IntValue(1))),  // frame link
+                                (args zip ps).map {
+                                    case (a,t)
+                                      => if (typevars(t).isEmpty)
+                                           code(a,level,fname)
+                                         else coerce(code(a,level,fname),
+                                                     Type2IRtype(type_inference(a),false),
+                                                     Type2IRtype(t,true))
+                                })
+                  if (typevars(ot).isEmpty)
+                    co
+                  else coerce(co,Type2IRtype(ot,true),Type2IRtype(type_inference(e),false))
              case _ => throw new Error("Unkown function: "+f)
            }
       case TupleExp(cl)
-        => val tp = typecheck(e)
-           val ltp = Type2IRtype(tp).asInstanceOf[AddressIRtype].address
+        => val tp = type_inference(e)
+           val ltp = Type2IRtype(tp,false).asInstanceOf[AddressIRtype].address
            val T = allocate_in_frame(new_name("T"),tp,fname)
            val cs = cl.zipWithIndex.map {
                        case (u,i) => Move(Mem(Indexed(T,IntValue(i))),
@@ -196,18 +237,18 @@ object CodeGenerator {
                     }
            ESeq(Seq(Move(T,Allocate(ltp,TypeSize(ltp)))::cs),T)
       case RecordExp(cl)
-        => val tp = typecheck(e)
-           val ltp = Type2IRtype(tp).asInstanceOf[AddressIRtype].address
-           val R = allocate_in_frame(new_name("R"),typecheck(e),fname)
+        => val tp = type_inference(e)
+           val ltp = Type2IRtype(tp,false).asInstanceOf[AddressIRtype].address
+           val R = allocate_in_frame(new_name("R"),type_inference(e),fname)
            val cs = cl.zipWithIndex.map {
                        case (Bind(_,u),i) => Move(Mem(Indexed(R,IntValue(i))),
                                                   code(u,level,fname))
                     }
            ESeq(Seq(Move(R,Allocate(ltp,TypeSize(ltp)))::cs),R)
       case ArrayExp(cl)
-        => val tp = typecheck(cl.head)
-           val ltp = Type2IRtype(tp)
-           val A = allocate_in_frame(new_name("A"),typecheck(e),fname)
+        => val tp = type_inference(cl.head)
+           val ltp = Type2IRtype(tp,false)
+           val A = allocate_in_frame(new_name("A"),type_inference(e),fname)
            val cs = cl.zipWithIndex.map {
                        case (u,i) => Move(Mem(Indexed(Indexed(A,IntValue(1)),
                                                     IntValue(i))),
@@ -215,13 +256,14 @@ object CodeGenerator {
                     }
            ESeq(Seq(Move(A,Allocate(TupleIRtype(List(IntIRtype(),VecIRtype(ltp))),
                                     Binop("PLUS",TypeSize(IntIRtype()),
-                                          Binop("TIMES",TypeSize(Type2IRtype(tp)),
+                                          Binop("TIMES",TypeSize(Type2IRtype(tp,false)),
                                                 IntValue(cl.size)))))::
                     Move(Mem(Indexed(A,IntValue(0))),
-                         IntValue(cl.length))::cs),A)
+                         IntValue(cl.length))::cs),
+                A)
       case ArrayGen(len,v)
-        => val tp = typecheck(v)
-           val ltp = Type2IRtype(tp)
+        => val tp = type_inference(v)
+           val ltp = Type2IRtype(tp,false)
            val A = allocate_in_frame(new_name("A"),ArrayType(tp),fname)
            val L = allocate_in_frame(new_name("L"),IntType(),fname)
            val V = allocate_in_frame(new_name("V"),tp,fname)
@@ -231,7 +273,7 @@ object CodeGenerator {
            ESeq(Seq(List(Move(L,code(len,level,fname)),        // store length in L
                          Move(A,Allocate(TupleIRtype(List(IntIRtype(),VecIRtype(ltp))),
                                          Binop("PLUS",TypeSize(IntIRtype()),
-                                               Binop("TIMES",TypeSize(Type2IRtype(tp)),L)))),
+                                               Binop("TIMES",TypeSize(Type2IRtype(tp,false)),L)))),
                          Move(V,code(v,level,fname)),          // store value in V
                          Move(Mem(Indexed(A,IntValue(0))),L),  // store length in A[0]
                          Move(I,IntValue(0)),
@@ -246,36 +288,11 @@ object CodeGenerator {
         => val lname = new_name("lambda")
            /* create a closure for the anonymous function: it contains the function address
               and a pointer to the current frame */
-           code(FuncDef(lname,fs,rtp,body),fname,level)
+           code(FuncDef(Nil,lname,fs,rtp,body),fname,level)
            st.lookup(lname) match {
-             case Some(FuncDeclaration(_,_,flabel,_,_))
+             case Some(FuncDeclaration(_,_,_,flabel,_,_))
                => Closure(flabel,FramePointer())
              case _ => throw new Error("Unkown function: "+e)
-           }
-        }
-
-  /** return the IR code from the address of the Lvalue e (level is the current
-   *  function nesting level, fname is the name of the current function/procedure) */
-  def code ( e: Lvalue, level: Int, fname: String ): IRexp =
-    e match {
-      case Var(s)
-        => access_variable(s,level,fname)
-      case ArrayDeref(v,u)
-        => val cv = code(v,level,fname)
-           val cu = code(u,level,fname)
-           Indexed(Indexed(Mem(cv),IntValue(1)),cu)
-      case TupleDeref(t,i)
-        => val ct = code(t,level,fname)
-           Indexed(Mem(ct),IntValue(i))
-      case RecordDeref(r,a)
-        => val cr = code(r,level,fname)
-           expandType(typecheck(r)) match {
-              case RecordType(cl)
-                => val i = cl.map(_.name).indexOf(a)
-                   Indexed(Mem(cr),IntValue(i))
-              case ArrayType(etp) if a == "length"
-                => Indexed(Mem(cr),IntValue(0))
-              case _ => throw new Error("Unkown record: "+e)
            }
     }
 
@@ -287,26 +304,41 @@ object CodeGenerator {
       case AssignSt(v,u)
         => val cd = code(v,level,fname)
            val cs = code(u,level,fname)
-           Move(Mem(cd),cs)
+           Move(cd,cs)
       case CallSt(f,args)
         => st.lookup(f) match {
-             case Some(FuncDeclaration(_,_,label,callee_level,_))
+             case Some(FuncDeclaration(_,_,ps,label,callee_level,_))
                => var sl: IRexp = FramePointer()
                   for ( _ <- callee_level to level )
                      sl = Mem(Indexed(sl,IntValue(0)))
-                  CallP(Address(label),sl,args.map(code(_,level,fname)))
-             case Some(VarDeclaration(FunctionType(_,_),_,_))
+                  CallP(Address(label),sl,
+                        (args zip ps).map {
+                            case (a,Bind(_,t))
+                              => if (typevars(t).isEmpty)
+                                    code(a,level,fname)
+                                 else coerce(code(a,level,fname),
+                                             Type2IRtype(type_inference(a),false),
+                                             Type2IRtype(t,true))
+                        })
+             case Some(VarDeclaration(FunctionType(ps,_),_,_))
                => val cv = access_variable(f,level,fname)
                   /* get the function address and the frame link from the closure cv */
                   CallP(Mem(cv),
-                        Mem(Indexed(cv,IntValue(1))),   // frame link
-                        args.map(code(_,level,fname)))
+                        Mem(Indexed(cv,IntValue(1))),  // frame link
+                        (args zip ps).map {
+                          case (a,t)
+                            => if (typevars(t).isEmpty)
+                                 code(a,level,fname)
+                               else coerce(code(a,level,fname),
+                                           Type2IRtype(type_inference(a),false),
+                                           Type2IRtype(t,true))
+                        })
              case _ => throw new Error("Unkown function: "+f)
            }
       case ReadSt(el)
         => Seq(el.map(v => {
-                  val cv = code(v,level,fname)
-                  typecheck(v) match {
+                  val Mem(cv) = code(v,level,fname)
+                  type_inference(v) match {
                      case IntType()
                        => SystemCall("READ_INT",cv)
                      case FloatType()
@@ -319,10 +351,13 @@ object CodeGenerator {
       case PrintSt(el)
         => val cs = el.map(v => {
                    val cv = code(v,level,fname)
-                   typecheck(v) match {
-                      case IntType() => SystemCall("WRITE_INT",cv)
-                      case FloatType() => SystemCall("WRITE_FLOAT",cv)
-                      case StringType() => SystemCall("WRITE_STRING",cv)
+                   type_inference(v) match {
+                      case IntType()
+                        => SystemCall("WRITE_INT",cv)
+                      case FloatType()
+                        => SystemCall("WRITE_FLOAT",cv)
+                      case StringType()
+                        => SystemCall("WRITE_STRING",cv)
                       case tp => throw new Error("*** Unknown type "+tp)
                    }
                 })
@@ -388,18 +423,26 @@ object CodeGenerator {
    * (level is the current function nesting level) */
   def code ( e: Definition, fname: String, level: Int ): IRstmt =
     e match {
-      case TypeDef(n,tp)
-        => st.insert(n,TypeDeclaration(tp))
+      case TypeDef(tps,n,tp)
+        => st.insert(n,TypeDeclaration(tps,tp))
+           val lnm = new_name(n)
+           val bd: Bind[IRdecl] = Bind(n,IRtypeDecl(lnm,tps,null))
+           declarations = declarations :+ bd
+           Type2IRtype(tp,false) match {
+             case AddressIRtype(etp)
+               => bd.value = IRtypeDecl(lnm,tps,etp)
+             case _ => throw new Error("Wrong recursive type: "+n)
+           }
            Seq(List())
       case VarDef(v,AnyType(),u)
-        => val V = allocate_in_frame(v,typecheck(u),fname)
+        => val V = allocate_in_frame(v,type_inference(u),fname)
            Move(V,code(u,level,fname))
       case VarDef(v,tp,u)
         => val V = allocate_in_frame(v,tp,fname)
            Move(V,code(u,level,fname))
-      case FuncDef(f,ps,ot,b)
+      case FuncDef(tps,f,ps,ot,b)
         => val flabel = if (f == "main") f else new_name(f)
-           st.insert(f,FuncDeclaration(ot,ps,flabel,level+1,
+           st.insert(f,FuncDeclaration(tps,ot,ps,flabel,level+1,
                                        if (f == "main") 0 else ps.length+1))
            st.begin_scope()
            /* allocate formal parameters in the frame */
@@ -415,27 +458,27 @@ object CodeGenerator {
                                     case _ => Nil
                                  }.reverse
            val frame_types = if (f == "main")
-                                local_var_types.map(Type2IRtype)
-                             else AddressIRtype(NamedIRtype(frame_type_name(fname)))::
-                                      local_var_types.map(Type2IRtype)
-           val formals = ps.map{ case Bind(_,tp) => Type2IRtype(tp) }
+                                local_var_types.map(Type2IRtype(_,false))
+                             else AddressIRtype(NamedIRtype(frame_type_name(fname),Nil))::
+                                      local_var_types.map(Type2IRtype(_,false))
+           val formals = ps.map{ case Bind(_,tp) => Type2IRtype(tp,false) }
            st.end_scope()
            declarations = declarations :+
-                              Bind(f,IRfuncDecl(flabel,frame_types,formals,
-                                                Type2IRtype(ot),level+1,body)
+                              Bind(f,IRfuncDecl(flabel,frame_types,tps,formals,
+                                                Type2IRtype(ot,false),level+1,body)
                                             .asInstanceOf[IRdecl]) :+
                               Bind(flabel+"_frame",
-                                   IRtypeDecl(flabel+"_frame",
+                                   IRtypeDecl(flabel+"_frame",Nil,
                                               TupleIRtype(frame_types)).asInstanceOf[IRdecl])
            Seq(List())
     }
 
-    def code ( e: Program ): List[Bind[IRdecl]] =
-      e match {
+  def code ( e: Program ): List[Bind[IRdecl]]
+    = e match {
         case Program(b@BlockSt(_))
           => declarations = Nil
              st.begin_scope()
-             code(FuncDef("main",List(),NoType(),b),"",0)
+             code(FuncDef(Nil,"main",List(),NoType(),b),"",0)
              st.end_scope()
              declarations
         case _ => throw new Error("Wrong program "+e);

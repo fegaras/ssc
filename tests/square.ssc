@@ -1,47 +1,47 @@
 /* testing arrays: squares a matrix */
 
-var SIZE = 5;
-var I = 0;
-var J = 0;
-var K = 0;
-var CELL= 0;
+var size = 5;
+var i = 0;
+var j = 0;
+var k = 0;
+var cell= 0;
 
-var B = array(SIZE,0);
-var C = array(SIZE,array(SIZE,0));
-var D = array(SIZE,array(SIZE,0));
+var b = array(size,0);
+var c = array(size,array(size,0));
+var d = array(size,array(size,0));
 
-I = 0;
-while (I < SIZE) {
-  C[I][I]= I+1;
-  I = I + 1;
+i = 0;
+while (i < size) {
+  c[i][i]= i+1;
+  i = i + 1;
 };
 
-I = 0;
-while (I < SIZE) {
-  J = 0;
-  while (J < SIZE) {
-    CELL=0;
-    K = 0;
-    while (K < SIZE) {
-      CELL = CELL + C[I][K]*C[K][J];
-      K = K + 1;
+i = 0;
+while (i < size) {
+  j = 0;
+  while (j < size) {
+    cell=0;
+    k = 0;
+    while (k < size) {
+      cell = cell + c[i][k]*c[k][j];
+      k = k + 1;
     };
-    D[I][J] = CELL;
-    J = J + 1;
+    d[i][j] = cell;
+    j = j + 1;
   };
-  I = I + 1;
+  i = i + 1;
 };
 
-print("Input matrix"); 
-I = 0;
-while (I < SIZE) {
-  print(C[I][0],"  ",C[I][1],"  ",C[I][2],"  ",C[I][3],"  ",C[I][4]);
-  I = I + 1;
+print("input matrix"); 
+i = 0;
+while (i < size) {
+  print(c[i][0],"  ",c[i][1],"  ",c[i][2],"  ",c[i][3],"  ",c[i][4]);
+  i = i + 1;
 };
 print();
-print("Input matrix squared"); 
-I = 0;
-while (I < SIZE) {
-  print(D[I][0],"  ",D[I][1],"  ",D[I][2],"  ",D[I][3],"  ",D[I][4]);
-  I = I + 1;
+print("input matrix squared"); 
+i = 0;
+while (i < size) {
+  print(d[i][0],"  ",d[i][1],"  ",d[i][2],"  ",d[i][3],"  ",d[i][4]);
+  i = i + 1;
 };

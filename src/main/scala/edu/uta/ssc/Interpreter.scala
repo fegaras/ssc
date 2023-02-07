@@ -166,8 +166,30 @@ object Interpreter {
                => BooleanVal(!x)
              case _ => throw new Error("Value "+string(uv)+" is not boolean")
            }
-      case LvalExp(lv)
-        => eval(lv,env)
+      case Var(name)
+        => lookup(name,env)
+      case ArrayDeref(array,index)
+        => (eval(array,env),eval(index,env)) match {
+              case (VectorVal(a),IntVal(i))
+                => a(i)
+              case (VectorVal(_),x)
+                => throw new Error("Array index must be integer: "+x)
+              case (x,_)
+                => throw new Error("Array indexing can only be done on arrays: "+x)
+           }
+      case RecordDeref(rec,attr)
+        => eval(rec,env) match {
+              case RecordVal(rs)
+                => rs.flatMap{ case Bind(n,v) => if (n == attr) List(v) else Nil }.head
+              case VectorVal(a) if attr == "length"
+                => IntVal(a.length)
+              case x => throw new Error("Record projection can only be done on records: "+x)
+           }
+      case TupleDeref(t,i)
+        => eval(t,env) match {
+              case VectorVal(a) => a(i)
+              case x => throw new Error("Tuple indexing can only be done on tuples: "+x)
+           }
       case CallExp(f,args)
         => lookup(f,env) match {
               case Closure(params,body,cenv)
@@ -197,37 +219,8 @@ object Interpreter {
       case _ => throw new Error("Unrecognized AST expression: "+e)
     }
 
-  /** Evaluate an Lvalue AST under the binding environment env */
-  def eval ( e: Lvalue, env: Env ): Value =
-    e match {
-      case Var(name)
-        => lookup(name,env)
-      case ArrayDeref(array,index)
-        => (eval(array,env),eval(index,env)) match {
-              case (VectorVal(a),IntVal(i))
-                => a(i)
-              case (VectorVal(_),x)
-                => throw new Error("Array index must be integer: "+x)
-              case (x,_)
-                => throw new Error("Array indexing can only be done on arrays: "+x)
-           }
-      case RecordDeref(rec,attr)
-        => eval(rec,env) match {
-              case RecordVal(rs)
-                => rs.flatMap{ case Bind(n,v) => if (n == attr) List(v) else Nil }.head
-              case VectorVal(a) if attr == "length"
-                => IntVal(a.length)
-              case x => throw new Error("Record projection can only be done on records: "+x)
-           }
-      case TupleDeref(t,i)
-        => eval(t,env) match {
-              case VectorVal(a) => a(i)
-              case x => throw new Error("Tuple indexing can only be done on tuples: "+x)
-           }
-    }
-
   /** Replace the content of an Lvalue with a new value */
-  def assign ( e: Lvalue, v: Value, env: Env ) {
+  def assign ( e: Expr, v: Value, env: Env ) {
     e match {
       case Var(name)
         => replace(name,v,env)
@@ -254,6 +247,7 @@ object Interpreter {
                 => a(i) = v
               case x => throw new Error("Tuple indexing can only be done on tuples: " + x)
            }
+      case _ => throw new Error("Wrong l-value: "+e)
     }
   }
 
@@ -335,11 +329,11 @@ object Interpreter {
   /** Evaluate a definition and extend the current environment */
   def eval ( e: Definition, env: Env ): Env =
     e match {
-      case TypeDef(_,_)
+      case TypeDef(_,_,_)
         => env
       case VarDef(v,_,u)
         => Bind(v,eval(u,env))::env
-      case FuncDef(f,ps,_,b)
+      case FuncDef(_,f,ps,_,b)
         => val closure = Closure(ps.map{ case Bind(v,_) => v },b,env)
            val nenv: Env = Bind(f,closure.asInstanceOf[Value])::env
            closure.env = nenv   // the closure environment must contain f to allow recursion
@@ -353,35 +347,48 @@ object Interpreter {
 
   /** An read-eval-print interpreter that reads and evaluates SSC expressions and statements */
   def main ( args: Array[String] ) {
-    println("The SSC interpreter. Type quit to exit")
-    println("Type =e to evaluate an SSC expression e; everything else is evaluated as a statement or declaration. ")
-    var env: Env = List(Bind("res",IntVal(0)))
-    val print_ast = args.length > 0 && args(0) == "ast"
-    //val consoleReader = new scala.tools.jline.console.ConsoleReader()
-    do try {
-      //var line = consoleReader.readLine("> ")
-      print("> ")
-      var line = readLine()
-      if (line == "quit")
-        return
-      val ep = line.nonEmpty && line(0) == '='
-      if (ep)
-        line = "res="+line.tail
-      val program_ast = Parser.parse_line(line+";")
-      if (print_ast)
-        println(Pretty.print(program_ast.toString))
-      program_ast.body match {
+    if (args.length == 0) {
+      println("The SSC interpreter. Type quit to exit")
+      println("Type =e to evaluate an SSC expression e")
+      println("Everything else is evaluated as a statement or declaration. ")
+      var env: Env = List(Bind("res",IntVal(0)))
+      val print_ast = args.length > 0 && args(0) == "ast"
+      //val consoleReader = new scala.tools.jline.console.ConsoleReader()
+      do try {
+        //var line = consoleReader.readLine("> ")
+        print("> ")
+        var line = readLine()
+        if (line == "quit")
+          return
+        val ep = line.nonEmpty && line(0) == '='
+        if (ep)
+          line = "res="+line.tail
+        val program_ast = Parser.parse_line(line+";")
+        if (print_ast)
+          println(Pretty.print(program_ast.toString))
+        program_ast.body match {
           case BlockSt(dl)
             => dl.foreach {
                   case Left(d) => env = eval(d,env)
                   case Right(s) => eval(s,env)
                }
+        }
+        if (ep)
+          println("-> "+string(lookup("res",env)))
+      } catch {
+        case s: Error => System.err.println(s.getMessage)
+        case s: Throwable => System.err.println(s)
+      } while(true)
+    } else {  // evaluate the input files
+      for ( file <- args ) {
+        val program_ast = Parser.parse(file)
+        program_ast match {
+          case Program(BlockSt(Nil))
+            => sys.exit(-1)
+          case _ =>;
+        }
+        eval(program_ast)
       }
-      if (ep)
-        println("-> "+string(lookup("res",env)))
-    } catch {
-      case s: Error => System.err.println(s.getMessage)
-      case s: Throwable => System.err.println(s)
-    } while(true)
+    }
   }
 }

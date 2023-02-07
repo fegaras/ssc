@@ -15,6 +15,7 @@
  */
 package edu.uta.ssc
 
+/* Not used. Use TypeInference instead */
 object TypeChecker {
 
   var trace_typecheck = false
@@ -32,9 +33,9 @@ object TypeChecker {
   /** If tp is a named type, expand it */
   def expandType ( tp: Type ): Type =
     tp match {
-      case NamedType(nm)
+      case NamedType(nm,_)
         => st.lookup(nm) match {
-          case Some(TypeDeclaration(t))
+          case Some(TypeDeclaration(_,t))
               => expandType(t)
           case _ => error("Undeclared type: "+tp)
         }
@@ -71,7 +72,7 @@ object TypeChecker {
            }
       case _
         => tp2 match {
-             case NamedType(_)
+             case NamedType(_,_)
                => typeEquivalence(tp1,expandType(tp2))
              case _ => false
            }
@@ -129,11 +130,43 @@ object TypeChecker {
            else if (!typeEquivalence(tp,IntType()) && !typeEquivalence(tp,FloatType()))
                    error("Unary +/- can only be applied to integer or real numbers"+e)
            else tp
-      case LvalExp(lv)
-        => typecheck(lv)
+      case Var(name)
+        => st.lookup(name) match {
+              case Some(VarDeclaration(t,_,_)) => t
+              case Some(FuncDeclaration(_,ot,fs,_,_,_))
+                => FunctionType(fs.map(_.value),ot)
+              case Some(_) => error(name+" is not a variable")
+              case None => error("Undefined variable: "+name)
+        }
+      case ArrayDeref(array,index)
+        => if (!typeEquivalence(typecheck(index),IntType()))
+             error("Array index must be integer: "+e)
+           expandType(typecheck(array)) match {
+              case ArrayType(tp) => tp
+              case _ => error("Array indexing can only be done on arrays: "+e)
+           }
+      case RecordDeref(rec,attr)
+        => expandType(typecheck(rec)) match {
+             case RecordType(cs)
+                => cs.find{ case Bind(c,_) => c == attr } match {
+                     case Some(Bind(_,tp)) => tp
+                     case _ => error("Record does not have the component: "+attr)
+                   }
+             case ArrayType(_) if attr == "length"
+                => IntType()
+             case _ => error("Record projection can only be done on records: "+e)
+           }
+      case TupleDeref(t,i)
+        => expandType(typecheck(t)) match {
+             case TupleType(cs)
+                => if (i >= cs.length)
+                      error("Tuple does not have "+i+" elements")
+                   cs(i)
+             case _ => error("Tuple projection can only be done on tuples: "+e)
+           }
       case CallExp(f,args)
         => st.lookup(f) match {
-              case Some(FuncDeclaration(otp,params,_,_,_))
+              case Some(FuncDeclaration(_,otp,params,_,_,_))
                  => if (params.length != args.length)
                       error("Number of formal parameters does not much the number of arguments in call: "+e)
                     else (args.map(typecheck) zip params).map {
@@ -181,45 +214,6 @@ object TypeChecker {
            FunctionType(fs.map(_.value),ot)
     } )
 
-  /** typecheck an Lvalue AST */
-  def typecheck ( e: Lvalue ): Type =
-    trace(e,e match {
-      case Var(name)
-        => st.lookup(name) match {
-              case Some(VarDeclaration(t,_,_)) => t
-              case Some(FuncDeclaration(ot,fs,_,_,_))
-                => FunctionType(fs.map(_.value),ot)
-              case Some(_) => error(name+" is not a variable")
-              case None => error("Undefined variable: "+name)
-        }
-      case ArrayDeref(array,index)
-        => if (!typeEquivalence(typecheck(index),IntType()))
-             error("Array index must be integer: "+e)
-           expandType(typecheck(array)) match {
-              case ArrayType(tp) => tp
-              case _ => error("Array indexing can only be done on arrays: "+e)
-           }
-      case RecordDeref(rec,attr)
-        => expandType(typecheck(rec)) match {
-             case RecordType(cs)
-                => cs.find{ case Bind(c,_) => c == attr } match {
-                     case Some(Bind(_,tp)) => tp
-                     case _ => error("Record does not have the component: "+attr)
-                   }
-             case ArrayType(_) if attr == "length"
-                => IntType()
-             case _ => error("Record projection can only be done on records: "+e)
-           }
-      case TupleDeref(t,i)
-        => expandType(typecheck(t)) match {
-             case TupleType(cs)
-                => if (i >= cs.length)
-                      error("Tuple does not have "+i+" elements")
-                   cs(i)
-             case _ => error("Tuple projection can only be done on tuples: "+e)
-           }
-    } )
-
   /** typecheck a statement AST using the expected type of the return value from the current function */
   def typecheck ( e: Stmt, expected_type: Type ) {
     trace(e,e match {
@@ -231,7 +225,7 @@ object TypeChecker {
               error("Incompatible types in assignment: "+e)
       case CallSt(f,args)
         => st.lookup(f) match {
-          case Some(FuncDeclaration(NoType(),params,_,_,_))
+          case Some(FuncDeclaration(_,NoType(),params,_,_,_))
             => if (params.length != args.length)
                  error("Number of formal parameters does not much the number of arguments in call: "+e)
                else (args.map(typecheck) zip params).map {
@@ -316,16 +310,16 @@ object TypeChecker {
   /** typecheck a definition */
   def typecheck ( e: Definition ) {
     trace(e,e match {
-      case TypeDef(n,tp)
-        => st.insert(n,TypeDeclaration(tp))
+      case TypeDef(_,n,tp)
+        => st.insert(n,TypeDeclaration(Nil,tp))
       case VarDef(v,tp,u)
         => if (tp == AnyType())
               st.insert(v,VarDeclaration(typecheck(u),0,0))
            else if (u != null && !typeEquivalence(typecheck(u),tp))
                    error("Incompatible types in variable declaration: "+e)
            else st.insert(v,VarDeclaration(tp,0,0))
-      case FuncDef(f,ps,ot,b)
-        => st.insert(f,FuncDeclaration(ot,ps,"",0,0))
+      case FuncDef(_,f,ps,ot,b)
+        => st.insert(f,FuncDeclaration(Nil,ot,ps,"",0,0))
            st.begin_scope()
            ps.foreach{ case Bind(v,tp) => st.insert(v,VarDeclaration(tp,0,0)) }
            typecheck(b,ot)

@@ -25,10 +25,15 @@ object SSC {
       if (args.length > 1)
         println("... compiling "+file)
       val program_ast = Parser.parse(file)
+      program_ast match {
+        case Program(BlockSt(Nil))
+          => sys.exit(-1)
+        case _ =>;
+      }
       if (debug)
         println(Pretty.print(program_ast.toString))
-      TypeChecker.trace_typecheck = false
-      TypeChecker.typecheck(program_ast)
+      TypeInference.trace_type_inference = false
+      TypeInference.type_inference(program_ast)
       val ir = CodeGenerator.code(program_ast)
       if (debug)
         ir.foreach { case Bind(_,a) => println(Pretty.print(a.toString)) }

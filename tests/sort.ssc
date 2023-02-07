@@ -1,5 +1,5 @@
-var N = 10;
-var a = array(N,0);
+var nn = 10;
+var a = array(nn,0);
 
 def quicksort ( a: array[int], m: int, n: int ) {
   var i = 0; 
@@ -18,7 +18,7 @@ def quicksort ( a: array[int], m: int, n: int ) {
 
       def up () {
         i = i + 1;
-        if (i < N)
+        if (i < nn)
            if (a[i] < a[y])
               up();
       };
@@ -51,7 +51,7 @@ def quicksort ( a: array[int], m: int, n: int ) {
 
 def readarray () {
   var i = 0;
-  while (i < N - 1) {
+  while (i < nn - 1) {
     read(a[i]);
     i = i + 1;
   };
@@ -60,7 +60,7 @@ def readarray () {
 
 def writearray () {
   var i = 0;
-  while (i < N - 1) {
+  while (i < nn - 1) {
     print(a[i]);
     i = i + 1;
   };
@@ -69,5 +69,5 @@ def writearray () {
 print ("Give 9 integers:");
 readarray();
 print("The sorted numbers are:");
-quicksort(a,0,N-2);
+quicksort(a,0,nn-2);
 writearray();
