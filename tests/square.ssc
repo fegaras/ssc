@@ -14,7 +14,7 @@ i = 0;
 while (i < size) {
   c[i][i]= i+1;
   i = i + 1;
-};
+}
 
 i = 0;
 while (i < size) {
@@ -25,23 +25,23 @@ while (i < size) {
     while (k < size) {
       cell = cell + c[i][k]*c[k][j];
       k = k + 1;
-    };
+    }
     d[i][j] = cell;
     j = j + 1;
-  };
+  }
   i = i + 1;
-};
+}
 
 print("input matrix"); 
 i = 0;
 while (i < size) {
   print(c[i][0],"  ",c[i][1],"  ",c[i][2],"  ",c[i][3],"  ",c[i][4]);
   i = i + 1;
-};
+}
 print();
 print("input matrix squared"); 
 i = 0;
 while (i < size) {
   print(d[i][0],"  ",d[i][1],"  ",d[i][2],"  ",d[i][3],"  ",d[i][4]);
   i = i + 1;
-};
+}

@@ -9,7 +9,7 @@ def f (a : int) {
   x = x+1;
   for ( k = 1 to a )
       print(k);
-};
+}
 
 f(x+3);
 print(x+y*2);

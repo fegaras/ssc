@@ -13,14 +13,14 @@ def init (a : array[int]) {
   while (i < nn - 1) {
     a[i] = ii;
     i = i + 1;
- };
-};
+ }
+}
 
 def fibb (i: int): int {
   if (fibbs[i] == ii)
      fibbs[i] = fibb(i-2) + fibb(i-1);
   return fibbs[i];
-};
+}
 
 init(fibbs);
 print("Enter indices of eight fibbonacci numbers:");
@@ -30,4 +30,4 @@ while (j < 8) {
      print("Maximum index is ", nn-1)
   else print(n, " ", fibb(n));
   j = j + 1;
-};
+}

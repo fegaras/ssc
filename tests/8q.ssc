@@ -6,7 +6,7 @@ var x = array(8,-1);
 
 def printv () {
   print(x[0],x[1],x[2],x[3],x[4],x[5],x[6],x[7]);
-};
+}
 
 def queens (c : int) {
   var r = 0;
@@ -18,9 +18,9 @@ def queens (c : int) {
        x[c] = r;
        if (c == 7) printv() else queens(c+1);
        rows[r] = true; up[r-c+7] = true; down[r+c] = true;
-    };
+    }
     r = r + 1;
-  };
-};
+  }
+}
 
 queens(0);

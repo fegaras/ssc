@@ -11,8 +11,8 @@ def mark (x: int) {
      isPrime[x] = false;
      x = x + prime;
      mark(x);
-  };
-};
+  }
+}
 
 while (j < size) {
   if (isPrime[j] == true) {
@@ -20,8 +20,8 @@ while (j < size) {
      k = j + prime;
      mark(k);
      count = count + 1;
-  };
+  }
   j = j + 1;
-};
+}
 
 print("The number of prime numbers less than ", size, " is ", count);

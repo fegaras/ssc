@@ -35,6 +35,9 @@ object TypeInference {
     null
   }
 
+  /* Tracing level */
+  var trace_level: Int = -1
+
   def typevars ( tp: Type ): List[String]
     = tp match {
         case TypeParameter(v) => List(v)
@@ -65,17 +68,35 @@ object TypeInference {
   def apply ( env: Env, t: Type ): Type
     = env match {
         case Right(es) => es.foldRight(t) { case ((v,tp),r) => subst(v,tp,r) }
-        case _ => error("")
+        case Left(msg) => error(msg)
       }
 
   var fresh_var_count: Int = 0
 
-  def fresh ( typeParams: List[String], tp: Type ): Type = {
-    val fvs = typeParams.map(x => "_tp_"+fresh_var_count)
+  def fresh_var (): String = {
     fresh_var_count += 1
-    (typeParams zip fvs).foldLeft[Type](tp) {
-                              case (r,(v,fv)) => subst(fv,TypeParameter(fv),r)
-                         }
+    "_tp_"+fresh_var_count
+  }
+
+  def fresh ( typeParams: List[String], tp: Type ): (List[String],Type) = {
+    val fvs = typeParams.map(x => fresh_var())
+    (fvs, (typeParams zip fvs).foldLeft[Type](tp) {
+                              case (r,(v,fv)) => subst(v,TypeParameter(fv),r)
+                         })
+  }
+
+  def trace ( t1: Type, t2: Type, result: => Env ): Env = {
+    if (trace_type_inference) {
+       trace_level += 1
+       println(".  "*trace_level+"$$ unify "+t1)
+       println(".  "*trace_level+".   with "+t2)
+    }
+    val res = result
+    if (trace_type_inference) {
+       println(".  "*trace_level+"-> "+(res match { case Right(_) => "success"; case _ => "fail" }))
+       trace_level -= 1
+    }
+    res
   }
 
   def unify_lists ( ts1: List[Type], ts2: List[Type] ): Env
@@ -91,7 +112,7 @@ object TypeInference {
            }
 
   def unify ( t1: Type, t2: Type ): Env
-    = (t1,t2) match {
+    = trace(t1,t2,(t1,t2) match {
          case _
            if (t1 == t2 || t1.isInstanceOf[AnyType] || t2.isInstanceOf[AnyType])
            => Right(Nil)
@@ -113,10 +134,10 @@ object TypeInference {
            => if (bs1.map(_.name) != bs2.map(_.name))
                 Left(s"incompatible component names in records: $t1 $t2")
               else unify_lists(bs1.map(_.value),bs2.map(_.value))
-         case (FunctionType(ts1,t1),FunctionType(ts2,t2))
+         case (FunctionType(ts1,to1),FunctionType(ts2,to2))
            => unify_lists(ts1,ts2) match {
                 case e@Right(s)
-                  => unify(apply(e,t1),apply(e,t2)) match {
+                  => unify(apply(e,to1),apply(e,to2)) match {
                        case Right(r) => Right(s++r)
                        case f => f
                      }
@@ -127,31 +148,34 @@ object TypeInference {
            => unify_lists(ts1,ts2)
          case (NamedType(nm,ts),_)
            => st.lookup(nm) match {
-                 case Some(TypeDeclaration(vs,t))
-                   => if (vs.length == ts.length)
+                 case Some(TypeDeclaration(vts,tt))
+                   => val (vs,t) = fresh(vts,tt)
+                      if (vs.length == ts.length)
                         unify(subst(vs,ts,t),t2)
                       else Left(s"wrong number of type arguments in $t2")
                  case _ => Left("Undeclared type: "+t1)
               }
          case (_,NamedType(nm,ts))
            => st.lookup(nm) match {
-                 case Some(TypeDeclaration(vs,t))
-                   => if (vs.length == ts.length)
+                 case Some(TypeDeclaration(vts,tt))
+                   => val (vs,t) = fresh(vts,tt)
+                      if (vs.length == ts.length)
                         unify(t1,subst(vs,ts,t))
                       else Left(s"wrong number of type arguments in $t2")
                  case _ => Left("Undeclared type: "+t2)
               }
          case _
            => Left(s"incompatible types: $t1 $t2")
-      }
+      })
 
   /** If tp is a named type, expand it */
   def expandType ( tp: Type, polymorphic: Boolean = false ): Type
     = tp match {
          case NamedType(nm,ts)
            => st.lookup(nm) match {
-                 case Some(TypeDeclaration(vs,t))
-                   => expandType(if (polymorphic) t else subst(vs,ts,t))
+                 case Some(TypeDeclaration(vts,tt))
+                   => val (vs,t) = fresh(vts,tt)
+                      expandType(if (polymorphic) t else subst(vs,ts,t))
                  case _ => error("Undeclared type: "+tp)
               }
          case _ => tp
@@ -160,28 +184,27 @@ object TypeInference {
   def typeEquivalence ( tp1: Type, tp2: Type ): Boolean
     = unify(tp1,tp2).isRight
 
-  /* Tracing level */
-  var level: Int = -1
-
   def trace[T] ( e: Any, result: => T ): T = {
     if (trace_type_inference) {
-       level += 1
-       println(" "*(3*level)+"** "+e)
+       trace_level += 1
+       println(".  "*trace_level+"** "+e)
     }
     val res = result
     if (trace_type_inference) {
-       print(" "*(3*level))
+       print(".  "*trace_level)
        if (e.isInstanceOf[Stmt] || e.isInstanceOf[Definition])
           println("->")
        else println("-> "+res)
-       level -= 1
+       trace_level -= 1
     }
     res
   }
 
   /** type_inference an expression AST */
-  def type_inference ( e: Expr ): Type =
-    trace(e,e match {
+  def type_inference ( e: Expr ): Type
+    = if (e.tpe != null)
+        e.tpe   // the cached type of e
+      else { val tpe = trace(e,e match {
       case IntConst(_) => IntType()
       case FloatConst(_) => FloatType()
       case StringConst(_) => StringType()
@@ -216,7 +239,7 @@ object TypeInference {
         => st.lookup(name) match {
               case Some(VarDeclaration(t,_,_)) => t
               case Some(FuncDeclaration(vs,ot,fs,_,_,_))
-                => fresh(vs,FunctionType(fs.map(_.value),ot))
+                => fresh(vs,FunctionType(fs.map(_.value),ot))._2
               case Some(_) => error(name+" is not a variable")
               case None => error("Undefined variable: "+name)
         }
@@ -249,13 +272,13 @@ object TypeInference {
       case CallExp(f,args)
         => st.lookup(f) match {
               case Some(FuncDeclaration(vs,ot,ps,_,_,_))
-                 => val FunctionType(params,otp) = fresh(vs,FunctionType(ps.map(_.value),ot))
+                 => val FunctionType(params,otp) = fresh(vs,FunctionType(ps.map(_.value),ot))._2
                     if (params.length != args.length)
-                      error("Number of formal parameters does not much the number of arguments in call: "+e)
+                      error("Number of formal parameters does not match the number of arguments in call: "+e)
                     else apply(unify_lists(params,args.map(type_inference)),otp)
               case Some(VarDeclaration(FunctionType(params,otp),_,_))
                  => if (params.length != args.length)
-                      error("Number of formal parameters does not much the number of arguments in call: "+e)
+                      error("Number of formal parameters does not match the number of arguments in call: "+e)
                     else apply(unify_lists(params,args.map(type_inference)),otp)
               case Some(_) => error("Not a function: "+f)
               case _ => error("Undefined function: "+f)
@@ -284,6 +307,9 @@ object TypeInference {
            st.end_scope()
            FunctionType(fs.map(_.value),ot)
     } )
+    e.tpe = tpe
+    tpe
+  }
 
   /** type_inference a statement AST using the expected type of the return value from the current function */
   def type_inference ( e: Stmt, expected_type: Type ) {
@@ -297,13 +323,13 @@ object TypeInference {
       case CallSt(f,args)
         => st.lookup(f) match {
           case Some(FuncDeclaration(vs,ot@NoType(),ps,_,_,_))
-            => val FunctionType(params,otp) = fresh(vs,FunctionType(ps.map(_.value),ot))
+            => val FunctionType(params,otp) = fresh(vs,FunctionType(ps.map(_.value),ot))._2
                if (params.length != args.length)
-                 error("Number of formal parameters does not much the number of arguments in call: "+e)
+                 error("Number of formal parameters does not match the number of arguments in call: "+e)
                else apply(unify_lists(params,args.map(type_inference)),otp)
           case Some(VarDeclaration(FunctionType(params,otp@NoType()),_,_))
             => if (params.length != args.length)
-                 error("Number of formal parameters does not much the number of arguments in call: "+e)
+                 error("Number of formal parameters does not match the number of arguments in call: "+e)
                else apply(unify_lists(params,args.map(type_inference)),otp)
           case Some(_) => error("Not a procedure: "+f)
           case _ => error("Undefined procedure: "+f)

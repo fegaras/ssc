@@ -1,46 +1,46 @@
-type list[T] = { head: T, tail: list[T] };
+type list[T] = { head: T, tail: list[T] }
 
 var n = 100;
 
 var x: list[int] = ();
 
 for ( k = 1 to n )
-   x = { head=k, tail=x };
+   x = { head=k, tail=x }
 
-def cons ( i: T, l: list[T] ): list[T] {
-  return { head=i, tail=l };
-};
+def cons[T] ( i: T, l: list[T] ): list[T] {
+  return { head=i, tail=l }
+}
 
 def printl ( l: list[int] ) {
   if (l <> ()) {
      print(l.head);
      printl(l.tail);
-  };
-};
+  }
+}
 
 def append1[T] ( i: T, l: list[T] ): list[T] {
   if (l == ())
-     return { head=i, tail=() };
-  return { head=l.head, tail=append1(i,l.tail) };
-};
+     return { head=i, tail=() }
+  return { head=l.head, tail=append1(i,l.tail) }
+}
 
 def append[T] ( x: list[T], y: list[T] ): list[T] {
   if (x == ())
      return y;
-  return { head=x.head, tail=append(x.tail,y) };
-};
+  return { head=x.head, tail=append(x.tail,y) }
+}
 
 def reverse[T] ( l: list[T] ): list[T] {
   if (l == ())
      return ();
   return append1(l.head,reverse(l.tail));
-};
+}
 
-def map[T] ( l: list[T], f: (T) -> T ): list[T] {
+def map[T,S] ( l: list[T], f: (T) -> S ): list[S] {
   if (l == ())
      return ();
-  return { head=f(l.head), tail=map(l.tail,f) };
-};
+  return { head=f(l.head), tail=map(l.tail,f) }
+}
 
 
 printl(x);
@@ -49,7 +49,7 @@ printl(reverse(map(x,function (i:int):int { return i+1; })));
 x = reverse(map(x,function (i:int):int { return i+1; }));
 
 var z: list[{a:int,b:string}] = ();
-z = { head={ a=67, b="asd" }, tail=z };
+z = { head={ a=67, b="asd" }, tail=z }
 var cc = z.head.a;
 z = reverse(z);
 print(z.head.b);
@@ -59,8 +59,10 @@ type at[T] = (T,array[T]);
 var u: at[string] = ("aa",["a","b","c"]);
 print(u#1[2]);
 
-type ll[T,S] = list[(S,list[T])];
+type ll[Q,S] = list[(S,list[Q])];
 
 var b: ll[list[int],string] = cons(("a",cons(x,())),());
 
 b = reverse(b);
+
+var p = map(b,function (x:(string,list[list[int]])):string { var z = x#0; return z; });

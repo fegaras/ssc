@@ -46,6 +46,9 @@ object Normalizer {
       case Allocate(tp,a)
         => val (na,s) = normalize(a)
            (Allocate(tp,na),s)
+      case Coerce(a,t1,t2)
+        => val (na,s) = normalize(a)
+           (Coerce(na,t1,t2),s)
       case _ => (e,List())
   }
 

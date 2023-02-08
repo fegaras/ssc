@@ -8,4 +8,4 @@ while (k < 12) {
   if (k < 9 && a[k] < 10)
      print(k," ",a[k]);
   k = k+1;
-};
+}
