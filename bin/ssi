@@ -1,0 +1,11 @@
+#/bin/bash
+
+SSC_HOME="$(cd `dirname $0`/..; pwd -P)"
+
+for f in "$@"; do
+  bn=`basename $f .ssc`
+  echo "scala -cp $SSC_HOME/lib/SSC.jar edu.uta.ssc.SSC -malloc $f"
+  scala -cp $SSC_HOME/lib/SSC.jar edu.uta.ssc.SSC -malloc $f
+  echo "lli $bn.ll"
+  lli $bn.ll
+done

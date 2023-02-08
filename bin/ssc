@@ -2,16 +2,24 @@
 
 SSC_HOME="$(cd `dirname $0`/..; pwd -P)"
 
+malloc=""
+
 if [ ! -f "$SSC_HOME/lib/libgc.a" ]; then
-   echo "Need to install libgc.a from https://github.com/ivmai/bdwgc/"
+   # Need to install libgc.a from https://github.com/ivmai/bdwgc/
+   malloc="-malloc"
 fi
 
 for f in "$@"; do
-  bn=`basename $f .ssc`
-  echo "scala -cp $SSC_HOME/lib/SSC.jar edu.uta.ssc.SSC $f"
-  scala -cp $SSC_HOME/lib/SSC.jar edu.uta.ssc.SSC $f
-  echo "llc $bn.ll"
-  llc $bn.ll
-  echo "gcc-5 $bn.s -L$SSC_HOME/lib -lgc"
-  gcc-5 $bn.s -L$SSC_HOME/lib -lgc
+     bn=`basename $f .ssc`
+     echo "scala -cp $SSC_HOME/lib/SSC.jar edu.uta.ssc.SSC $malloc $f"
+     scala -cp $SSC_HOME/lib/SSC.jar edu.uta.ssc.SSC $malloc $f
+     echo "llc $bn.ll"
+     llc $bn.ll
+     if [ "$malloc" == "" ]; then
+        echo "gcc-5 $bn.s -L$SSC_HOME/lib -lgc"
+        gcc-5 $bn.s -L$SSC_HOME/lib -lgc
+     else
+        echo "gcc-5 $bn.s"
+        gcc-5 $bn.s
+     fi
 done

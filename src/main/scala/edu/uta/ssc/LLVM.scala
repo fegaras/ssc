@@ -17,7 +17,7 @@ package edu.uta.ssc
 
 
 /* Generates LLVM code from IR code */
-class LLVM ( out: java.io.PrintStream ) {
+class LLVM ( out: java.io.PrintStream, malloc: String ) {
   /** contains all the function and type declarations */
   var declarations: List[Bind[IRdecl]] = Nil
 
@@ -277,7 +277,7 @@ class LLVM ( out: java.io.PrintStream ) {
                   val sltp = typeof(s)
                   val ftp = ltype(FunctionIRtype(sltp::fs,ot))
                   val sz = llvm(s"zext i32 ${emit(TypeSize(tp))} to i64")
-                  val c = llvm(s"call noalias i8* @GC_malloc(i64 $sz)")
+                  val c = llvm(s"call noalias i8* @$malloc(i64 $sz)")
                   val closure = llvm(s"bitcast i8* $c to $ltp*")
                   val c0 = llvm(s"getelementptr $ltp, $ltp* $closure, i32 0, i32 0")
                   val ff = llvm(s"bitcast $ftp* @$f to $gtp")
@@ -374,7 +374,7 @@ class LLVM ( out: java.io.PrintStream ) {
            }
       case Allocate(tp,size)
         => val sz = llvm(s"zext i32 ${emit(size)} to i64")
-           val p = llvm(s"call noalias i8* @GC_malloc(i64 $sz)")
+           val p = llvm(s"call noalias i8* @$malloc(i64 $sz)")
            llvm(s"bitcast i8* $p to ${ltype(tp)}*")
       case TypeSize(tp)
         => ltype(tp) match {
@@ -545,7 +545,7 @@ class LLVM ( out: java.io.PrintStream ) {
            else { // the frame for a function that returns a closure must be allocated in the heap
               val size = emit(TypeSize(frame_type))     // emit code to calculate frame size
               val sz = llvm(s"zext i32 $size to i64")
-              val p = llvm(s"call noalias i8* @GC_malloc(i64 $sz)   ; allocate the frame in the heap")
+              val p = llvm(s"call noalias i8* @$malloc(i64 $sz)   ; allocate the frame in the heap")
               llvms(s"%fp = bitcast i8* $p to %$frame_type_name*")
            }
            val sl = llvm(s"getelementptr %$frame_type_name, %$frame_type_name* %fp, i32 0, i32 0")
@@ -576,7 +576,7 @@ class LLVM ( out: java.io.PrintStream ) {
     declarations = program
     program.foreach { case Bind(_,d:IRtypeDecl) => emit(d); case _ => ; }
     program.foreach { case Bind(_,d:IRfuncDecl) => emit(d); case _ => ; }
-    out.print("""declare noalias i8* @GC_malloc ( i64 )
+    out.print("declare noalias i8* @"+malloc+""" ( i64 )
 declare i32 @printf ( i8*, ... )
 declare i32 @scanf ( i8*, ... )
 declare void @exit ( i32 )

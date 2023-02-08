@@ -20,27 +20,33 @@ import java.io.PrintStream
 object SSC {
   val debug = false
 
+  var malloc = "GC_malloc"
+
   def main ( args: Array[String] ) {
     for ( file <- args ) {
-      if (args.length > 1)
-        println("... compiling "+file)
-      val program_ast = Parser.parse(file)
-      program_ast match {
-        case Program(BlockSt(Nil))
-          => sys.exit(-1)
-        case _ =>;
-      }
-      if (debug)
-        println(Pretty.print(program_ast.toString))
-      TypeInference.trace_type_inference = false
-      TypeInference.type_inference(program_ast)
-      val ir = CodeGenerator.code(program_ast)
-      if (debug)
-        ir.foreach { case Bind(_,a) => println(Pretty.print(a.toString)) }
-      val stream = new PrintStream(file.dropRight(3)+"ll")
-      val llvm = new LLVM(stream)
-      llvm.emit(ir)
-      stream.close()
+      if (file == "-malloc")
+        malloc = "malloc"
+      else {
+          if (args.length > 1)
+            println("... compiling "+file)
+          val program_ast = Parser.parse(file)
+          program_ast match {
+              case Program(BlockSt(Nil))
+                => sys.exit(-1)
+              case _ =>;
+          }
+          if (debug)
+            println(Pretty.print(program_ast.toString))
+          TypeInference.trace_type_inference = false
+          TypeInference.type_inference(program_ast)
+          val ir = CodeGenerator.code(program_ast)
+          if (debug)
+            ir.foreach { case Bind(_,a) => println(Pretty.print(a.toString)) }
+          val stream = new PrintStream(file.dropRight(3)+"ll")
+          val llvm = new LLVM(stream,malloc)
+          llvm.emit(ir)
+          stream.close()
+        }
     }
   }
 }
