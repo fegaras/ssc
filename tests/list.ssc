@@ -42,9 +42,10 @@ def map[T,S] ( l: list[T], f: (T) -> S ): list[S] {
   return { head=f(l.head), tail=map(l.tail,f) }
 }
 
-
 printl(x);
 print("****");
+def addn ( i:int ):int {return i+n};
+printl(reverse(map(x,addn)));
 printl(reverse(map(x,function (i:int):int { return i+1; })));
 x = reverse(map(x,function (i:int):int { return i+1; }));
 
@@ -66,3 +67,10 @@ var b: ll[list[int],string] = cons(("a",cons(x,())),());
 b = reverse(b);
 
 var p = map(b,function (x:(string,list[list[int]])):string { var z = x#0; return z; });
+
+
+var w = map(x,function(z:int):float{return 0.0});
+def add ( n: float ): (float)->float {
+  return function(m:float):float{return n+m}
+}
+var ii = map(w,add(10.0));

@@ -1,8 +1,8 @@
 # SSC: A compiler from a simple programming language to LLVM
 
-Requires Scala 2.12, [LLVM 14](https://releases.llvm.org/), and [gcc-5](https://gcc.gnu.org/gcc-5/).
+Requires Scala 2.12, [LLVM 14](https://releases.llvm.org/), and clang or gcc.
 
-Optional: The garbage collector library [libgc.a](https://github.com/ivmai/bdwgc/). Need to install libgc.a in ssc/lib/.
+Optional: The Boehm garbage collector library [libgc.a](https://github.com/ivmai/bdwgc/). Need to install libgc.a in ssc/lib/.
 
 Commands in ssc/bin/:
 
@@ -14,4 +14,4 @@ Commands in ssc/bin/:
 
 Examples in `ssc/tests`:
 
-Use `ssc list.ssc` to compile `list.ssc` to `a.out`.
+Use `../bin/ssc list.ssc` to compile `list.ssc` to `a.out`.

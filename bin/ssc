@@ -2,7 +2,16 @@
 
 SSC_HOME="$(cd `dirname $0`/..; pwd -P)"
 
+# Disable PIE mode to make 32-bit absolute addressing work
+CC_ARGS="-fno-pie -no-pie"
+
 malloc=""
+
+cc=clang
+if ! command -v clang &> /dev/null
+then
+  cc=gcc
+fi
 
 if [ ! -f "$SSC_HOME/lib/libgc.a" ]; then
    # Need to install libgc.a from https://github.com/ivmai/bdwgc/
@@ -16,10 +25,10 @@ for f in "$@"; do
      echo "llc $bn.ll"
      llc $bn.ll
      if [ "$malloc" == "" ]; then
-        echo "gcc-5 $bn.s -L$SSC_HOME/lib -lgc"
-        gcc-5 $bn.s -L$SSC_HOME/lib -lgc
+        echo "$cc $CC_ARGS $bn.s -L$SSC_HOME/lib -lgc"
+        $cc $CC_ARGS $bn.s -L$SSC_HOME/lib -lgc
      else
-        echo "gcc-5 $bn.s"
-        gcc-5 $bn.s
+        echo "$cc $CC_ARGS $bn.s"
+        $cc $CC_ARGS $bn.s
      fi
 done
